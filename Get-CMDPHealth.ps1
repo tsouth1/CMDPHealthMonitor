@@ -95,6 +95,11 @@ param(
     [Parameter()]
     [Switch]$IncludeRetrying,
 
+    # Drives above this % used are listed in the report's 'Take Immediate Action' section.
+    [Parameter()]
+    [ValidateRange(1, 100)]
+    [Int]$ImmediateActionPctUsed = 90,
+
     [Parameter()]
     [String]$ReportPath,
 
@@ -554,6 +559,45 @@ function Export-DPHealthReport {
         }) -join "`n"
     }
 
+    # --- Take Immediate Action: drives over the threshold, and failed content to redistribute ---
+    $urgentDiskRows = ''
+    if ($Data.ContainsKey('DiskSpace')) {
+        $urgentDiskRows = ($Data.DiskSpace |
+            Where-Object { $null -ne $_.PctUsed -and $_.PctUsed -gt $ImmediateActionPctUsed } |
+            Sort-Object PctUsed -Descending | ForEach-Object {
+                "<tr class='Critical'><td>$(& $enc $_.DP)</td><td>$($_.Drive)</td><td>$($_.PctUsed)</td><td>$($_.FreeGB)</td><td>$($_.TotalGB)</td><td>$($_.Source)</td><td>$($_.AsOf)</td></tr>"
+            }) -join "`n"
+    }
+
+    # Only InstallFailed (3) needs a redistribute; removal failures and retries are in Findings.
+    # One row per content object so each can be redistributed once to all its failed DPs.
+    $redistRows = ''
+    if ($Data.ContainsKey('ContentFailures')) {
+        $redistRows = ($Data.ContentFailures | Where-Object StateCode -eq 3 |
+            Group-Object PackageID | Sort-Object Count -Descending | ForEach-Object {
+                $first = $_.Group[0]
+                $dpList = ($_.Group | ForEach-Object ServerName | Sort-Object -Unique | ForEach-Object { & $enc $_ }) -join '<br>'
+                $oldest = ($_.Group | Sort-Object SummaryDate | Select-Object -First 1).SummaryDate
+                "<tr class='Critical'><td>$(& $enc $first.PackageName)</td><td>$(& $enc $first.PackageID)</td><td>$(& $enc $first.PackageType)</td><td>$($_.Count)</td><td>$dpList</td><td>$(if ($oldest -is [DateTime]) { $oldest.ToString('yyyy-MM-dd HH:mm') })</td></tr>"
+            }) -join "`n"
+    }
+
+    $diskSection = if ($urgentDiskRows) {
+        "<table><tr><th>DP</th><th>Drive</th><th>% Used</th><th>Free GB</th><th>Total GB</th><th>Source</th><th>As of</th></tr>`n$urgentDiskRows`n</table>"
+    } elseif ($Data.ContainsKey('DiskSpace')) {
+        "<p class='ok'>No DP drives over $ImmediateActionPctUsed% used.</p>"
+    } else {
+        "<p>Disk check not run.</p>"
+    }
+
+    $redistSection = if ($redistRows) {
+        "<table><tr><th>Content</th><th>ID</th><th>Type</th><th># DPs failed</th><th>Failed on</th><th>Failing since</th></tr>`n$redistRows`n</table>"
+    } elseif ($Data.ContainsKey('ContentFailures')) {
+        "<p class='ok'>No failed content distributions.</p>"
+    } else {
+        "<p>Content check not run.</p>"
+    }
+
     $count = { param($sev) @($Findings | Where-Object Severity -eq $sev).Count }
 
     @"
@@ -565,9 +609,18 @@ table{border-collapse:collapse;width:100%;margin-bottom:24px;font-size:13px}
 th{background:#0078d4;color:#fff;text-align:left}
 td,th{border:1px solid #ddd;padding:6px}
 .Critical{background:#ffb3b3}.High{background:#ffd699}.Warning{background:#fff2cc}.Info{background:#e8f0e3}
+.action{border:2px solid #c00;padding:4px 16px 8px;margin-bottom:24px}
+.action h2{color:#c00}.ok{color:#2a7a2a}
 </style></head><body>
 <h1>Configuration Manager DP Health</h1>
 <p>Generated $(Get-Date -Format 'yyyy-MM-dd HH:mm') from $(& $enc $SqlServer)/$(& $enc $Database)</p>
+<div class="action">
+<h2>Take Immediate Action</h2>
+<h3>DP drives over $ImmediateActionPctUsed% used</h3>
+$diskSection
+<h3>Failed content to redistribute</h3>
+$redistSection
+</div>
 <ul>
 <li>Distribution points evaluated: $DPCount</li>
 <li>Critical: $(& $count 'Critical') &middot; High: $(& $count 'High') &middot; Warning: $(& $count 'Warning') &middot; Info: $(& $count 'Info')</li>
