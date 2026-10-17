@@ -233,7 +233,7 @@ function Get-DPList {
 SELECT DISTINCT
     UPPER(dp.ServerName) AS ServerName,
     UPPER(LEFT(dp.ServerName, CHARINDEX('.', dp.ServerName + '.') - 1)) AS NetbiosName,
-    dp.SiteCode
+    dp.SMSSiteCode AS SiteCode
 FROM v_DistributionPoints dp
 '@
     Invoke-CMSqlQuery -Query $query | Where-Object { -not (Test-ExcludedDP $_.ServerName) }
