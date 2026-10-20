@@ -30,6 +30,17 @@
 SET NOCOUNT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
+-- Guard: fail fast with a clear message when the data source points at the
+-- wrong database (e.g. master) instead of the ConfigMgr site database.
+IF OBJECT_ID('dbo.v_DistributionPoints') IS NULL
+BEGIN
+    DECLARE @GuardDb    nvarchar(128) = DB_NAME();
+    DECLARE @GuardLogin nvarchar(128) = SUSER_SNAME();
+    RAISERROR(N'Connected to database [%s] as [%s], which is not a ConfigMgr site database (v_DistributionPoints not found). Use the ConfigMgr shared data source in the ConfigMgr_<SiteCode> folder, or point the connection at CM_<SiteCode>.',
+              16, 1, @GuardDb, @GuardLogin);
+    RETURN;
+END;
+
 DECLARE @MaxInventoryAgeDays    int          = 7;    -- inventory older than this is stale
 DECLARE @ImmediateActionPctUsed decimal(5,1) = 90;   -- drives above this % used -> Immediate Action
 DECLARE @IncludeRetrying        bit          = 0;    -- 1 = also list content in Retrying state
